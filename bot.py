@@ -25,9 +25,7 @@ from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
-    MessageHandler,
     ContextTypes,
-    filters,
 )
 
 # ---------- Config ----------
@@ -79,8 +77,9 @@ class TimerStore:
             del self.timers[timer_id]
             self.save()
 
-    def user_timers(self, user_id: int) -> List[dict]:
-        return [t for t in self.timers.values() if t["user_id"] == user_id]
+    def user_timers(self, user_id: int) -> List[tuple]:
+        """Return list of (timer_id, data) for this user."""
+        return [(tid, t) for tid, t in self.timers.items() if t["user_id"] == user_id]
 
 
 store = TimerStore(DATA_FILE)
@@ -101,7 +100,6 @@ def parse_duration(text: str) -> Optional[int]:
     if not text:
         return None
 
-    # Plain seconds
     if text.isdigit():
         return int(text)
 
@@ -232,14 +230,14 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = ["📋 *Your active timers:*\n"]
-    for t in timers:
+    for tid, t in timers:
         remaining = t["remaining"] if t["paused"] else max(
             0, int(t["end_ts"] - datetime.utcnow().timestamp())
         )
         status = "⏸ Paused" if t["paused"] else "▶️ Running"
         lines.append(
-            f"• `{t.get('label', human_time(t['duration']))}` — "
-            f"{human_time(remaining)} left — {status}\n  ID: `{t['user_id']}_{t['started_at']}`"
+            f"• *{human_time(t['duration'])}* — {human_time(remaining)} left — {status}\n"
+            f"  ID: `{tid}`"
         )
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
@@ -247,7 +245,9 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: `/cancel <timer_id>`", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            "Usage: `/cancel <timer_id>`", parse_mode=ParseMode.MARKDOWN
+        )
         return
     timer_id = context.args[0]
     t = store.get(timer_id)
@@ -274,16 +274,11 @@ async def cmd_cancelall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not timers:
         await update.message.reply_text("📭 You have no active timers.")
         return
-    for t in timers:
-        store.remove(t["user_id"] and _tid_of(t, store))
-    await update.message.reply_text(f"✅ Cancelled {len(timers)} timer(s).")
-
-
-def _tid_of(timer: dict, s: TimerStore) -> str:
-    for tid, data in list(s.timers.items()):
-        if data is timer:
-            return tid
-    return ""
+    count = 0
+    for tid, _ in timers:
+        store.remove(tid)
+        count += 1
+    await update.message.reply_text(f"✅ Cancelled {count} timer(s).")
 
 
 # ---------- Callback buttons ----------
@@ -350,7 +345,6 @@ async def timer_worker(app: Application):
                 if t["paused"]:
                     continue
                 if now >= t["end_ts"]:
-                    # Fire notification
                     try:
                         await app.bot.send_message(
                             chat_id=t["chat_id"],
@@ -364,7 +358,6 @@ async def timer_worker(app: Application):
                     except Exception as e:
                         logger.warning(f"Failed to notify: {e}")
 
-                    # Update the original message
                     if t.get("message_id"):
                         try:
                             await app.bot.edit_message_text(
