@@ -13,7 +13,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from telegram import (
     Update,
@@ -31,7 +31,7 @@ from telegram.ext import (
 # ---------- Config ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 DATA_FILE = os.environ.get("DATA_FILE", "timers.json")
-CHECK_INTERVAL = 1  # seconds between checks
+CHECK_INTERVAL = 1
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -42,8 +42,6 @@ logger = logging.getLogger("smart-timer-bot")
 
 # ---------- Storage ----------
 class TimerStore:
-    """Simple JSON-backed store for active timers."""
-
     def __init__(self, path: str):
         self.path = path
         self.timers: Dict[str, dict] = {}
@@ -77,8 +75,7 @@ class TimerStore:
             del self.timers[timer_id]
             self.save()
 
-    def user_timers(self, user_id: int) -> List[tuple]:
-        """Return list of (timer_id, data) for this user."""
+    def user_timers(self, user_id: int) -> List[Tuple[str, dict]]:
         return [(tid, t) for tid, t in self.timers.items() if t["user_id"] == user_id]
 
 
@@ -95,28 +92,22 @@ DURATION_RE = re.compile(
 
 
 def parse_duration(text: str) -> Optional[int]:
-    """Parse strings like '1h 30m', '90s', '5m', '2h' -> total seconds."""
     text = text.strip().lower().replace(",", " ")
     if not text:
         return None
-
     if text.isdigit():
         return int(text)
-
     match = DURATION_RE.match(text)
     if not match:
         return None
-
     h, m, s = match.groups()
     if not any([h, m, s]):
         return None
-
     total = int(h or 0) * 3600 + int(m or 0) * 60 + int(s or 0)
     return total if total > 0 else None
 
 
 def human_time(seconds: int) -> str:
-    """Convert seconds to a nice string like '1h 5m 3s'."""
     seconds = max(0, int(seconds))
     h, rem = divmod(seconds, 3600)
     m, s = divmod(rem, 60)
@@ -193,7 +184,6 @@ async def cmd_timer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
     timer_id = new_timer_id(user.id)
-
     end_ts = (datetime.utcnow() + timedelta(seconds=seconds)).timestamp()
 
     data = {
@@ -239,7 +229,6 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• *{human_time(t['duration'])}* — {human_time(remaining)} left — {status}\n"
             f"  ID: `{tid}`"
         )
-
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
@@ -337,7 +326,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- Background worker ----------
 async def timer_worker(app: Application):
-    """Checks all timers and fires notifications when finished."""
     while True:
         try:
             now = datetime.utcnow().timestamp()
