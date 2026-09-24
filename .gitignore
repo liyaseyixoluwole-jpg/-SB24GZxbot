@@ -4,3 +4,6 @@ __pycache__/
 timers.json
 .venv/
 venv/
+runtime.txt
+nixpacks.toml
+Procfile
